@@ -1,0 +1,212 @@
+name: Sync and deploy docs
+
+# Mirrors apps/docs from the private avon-vle/avon monorepo into docs/, then
+# builds it and deploys to GitHub Pages (docs.avon.ac).
+#
+# Developer docs live in apps/docs/src/dev in the monorepo. They are never
+# copied here: the sync excludes that folder and fails if anything that looks
+# like developer docs reaches this repository.
+#
+# Triggers:
+# - push to sync-trigger: on pushes to main touching apps/docs or
+#   packages/tsconfig, avon-vle/avon force-pushes a commit (this repo's main
+#   plus an updated .sync-trigger) there. Deploy keys can't send
+#   repository_dispatch, so a branch push is the signal.
+# - schedule: hourly safety net in case a trigger is missed.
+# - workflow_dispatch: manual run.
+# - push to main: workflow edits in this repo.
+
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+  push:
+    branches: [main, sync-trigger]
+    paths:
+      - ".github/workflows/deploy.yml"
+      - ".sync-trigger"
+
+permissions:
+  actions: write
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  AVON_REPOSITORY: avon-vle/avon
+  AVON_REF: main
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.commit.outputs.changed }}
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - name: Check sync key
+        env:
+          AVON_SYNC_SSH_KEY: ${{ secrets.AVON_SYNC_SSH_KEY }}
+        run: |
+          if [ -z "$AVON_SYNC_SSH_KEY" ]; then
+            echo "::error::AVON_SYNC_SSH_KEY is not set. Add the private half of a read-only deploy key on $AVON_REPOSITORY."
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Checkout avon (apps/docs only)
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.AVON_REPOSITORY }}
+          ref: ${{ env.AVON_REF }}
+          ssh-key: ${{ secrets.AVON_SYNC_SSH_KEY }}
+          path: .avon-src
+          persist-credentials: false
+          sparse-checkout: |
+            apps/docs
+            packages/tsconfig
+
+      - name: Check developer docs are separated
+        run: |
+          # Older monorepo revisions kept developer pages alongside public
+          # ones. Refuse to publish until they live in apps/docs/src/dev.
+          if [ ! -f .avon-src/apps/docs/src/dev/nav.ts ]; then
+            echo "::error::apps/docs/src/dev/nav.ts not found in $AVON_REPOSITORY@$AVON_REF; refusing to publish docs that may include developer pages."
+            exit 1
+          fi
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Copy apps/docs into docs/
+        run: |
+          # src/dev holds developer-only docs and must never be published.
+          # bun.lock is excluded so the standalone lockfile kept in this repo
+          # survives --delete; the monorepo has no per-app lockfile.
+          rsync -a --delete \
+            --exclude /src/dev/ \
+            --exclude node_modules --exclude dist --exclude .turbo \
+            --exclude .DS_Store --exclude bun.lock --exclude vendor \
+            --exclude AVON_SOURCE \
+            .avon-src/apps/docs/ docs/
+
+          # The only workspace dependency is the shared tsconfig preset.
+          mkdir -p docs/vendor
+          rsync -a --delete .avon-src/packages/tsconfig/ docs/vendor/tsconfig/
+          jq '.devDependencies["@avon/tsconfig"] = "file:./vendor/tsconfig"' \
+            docs/package.json > docs/package.json.tmp
+          mv docs/package.json.tmp docs/package.json
+
+          git -C .avon-src rev-parse HEAD > docs/AVON_SOURCE
+          rm -rf .avon-src
+
+      - name: Check no developer docs were copied
+        run: |
+          if [ -e docs/src/dev ]; then
+            echo "::error::docs/src/dev exists; developer docs must not be published."
+            exit 1
+          fi
+          if grep -rn "localOnly: true" docs/src; then
+            echo "::error::Found a developer-only nav group in public docs source."
+            exit 1
+          fi
+
+      - name: Update lockfile
+        working-directory: docs
+        run: bun install
+
+      - name: Commit sync
+        id: commit
+        run: |
+          git add -A docs
+          if git diff --cached --quiet; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            source_sha="$(cat docs/AVON_SOURCE)"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "chore(docs): sync from $AVON_REPOSITORY@${source_sha:0:7}"
+            git push origin HEAD:main
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # The github-pages environment only accepts deployments from main, so a
+      # sync-trigger run hands off to a fresh run on main instead of deploying.
+      - name: Deploy from main
+        if: github.ref == 'refs/heads/sync-trigger'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy.yml --repo "$GITHUB_REPOSITORY" --ref main
+
+  build:
+    needs: sync
+    # Hourly runs only rebuild when the sync brought in something new.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (needs.sync.outputs.changed == 'true' || github.event_name != 'schedule')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        working-directory: docs
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        working-directory: docs
+        env:
+          LTI_TOOL_BASE_URL: ${{ vars.LTI_TOOL_BASE_URL || 'https://api.avon.ac' }}
+          VITE_WEB_URL: ${{ vars.VITE_WEB_URL || 'https://avon.ac' }}
+        run: bun run build
+
+      - name: Add SPA route fallbacks
+        working-directory: docs
+        run: |
+          # Pages has no rewrites: serve the SPA shell at each docs page so
+          # deep links return 200, and as 404.html for anything else.
+          cp dist/index.html dist/404.html
+          find src/docs -name '*.md' | while read -r page; do
+            slug="${page#src/docs/}"
+            slug="${slug%.md}"
+            slug="${slug%/index}"
+            [ "$slug" = "index" ] && continue
+            mkdir -p "dist/$slug"
+            cp dist/index.html "dist/$slug/index.html"
+          done
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ./docs/dist
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
