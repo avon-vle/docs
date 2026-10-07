@@ -1,0 +1,31 @@
+@import "tailwindcss";
+@import "./styles/docs.css";
+
+@layer base {
+  :root {
+    --avon-page-bg: #fafaf9;
+    color: #1c1917;
+    background: var(--avon-docs-paint-bg, #fafaf9);
+    font-family: "Helvetica Neue", sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  html {
+    overflow-x: clip;
+    /* Avoid horizontal jump when modals lock scroll / hide the scrollbar. */
+    scrollbar-gutter: stable;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  html,
+  body {
+    background: var(--avon-docs-paint-bg, #fafaf9);
+  }
+
+  img {
+    max-width: 100%;
+    height: auto;
+  }
+}

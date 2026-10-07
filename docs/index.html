@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <title>Avon Docs</title>
+    <meta name="theme-color" content="#fafaf9" id="avon-theme-color" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="shortcut icon" href="/favicon.ico" />
+    <style>
+      :root {
+        --avon-page-bg: #fafaf9;
+        --avon-docs-paint-bg: #fafaf9;
+      }
+
+      html,
+      body {
+        margin: 0;
+        background: var(--avon-docs-paint-bg);
+      }
+
+      html.avon-theme-dark {
+        --avon-page-bg: #111318;
+        --avon-docs-paint-bg: #111318;
+      }
+
+      #root:empty {
+        background: var(--avon-docs-paint-bg);
+        min-height: 100vh;
+      }
+
+      #root:empty::before {
+        background: var(--avon-docs-paint-bg);
+        border-bottom: 1px solid #e7e5e4;
+        content: "";
+        display: block;
+        height: 3.25rem;
+      }
+
+      html.avon-theme-dark #root:empty::before {
+        border-bottom-color: #2b3039;
+      }
+    </style>
+    <script>
+      (function () {
+        var root = document.documentElement;
+        var themeColor = document.getElementById("avon-theme-color");
+        var storedTheme = window.localStorage.getItem("avon.website.theme");
+        var mode =
+          storedTheme === "light" ||
+          storedTheme === "dark" ||
+          storedTheme === "system"
+            ? storedTheme
+            : "system";
+        var resolved =
+          mode === "system"
+            ? window.matchMedia("(prefers-color-scheme: dark)").matches
+              ? "dark"
+              : "light"
+            : mode;
+        var dark = resolved === "dark";
+
+        root.dataset.avonTheme = mode;
+        root.dataset.avonResolvedTheme = resolved;
+        root.classList.toggle("avon-theme-dark", dark);
+        root.classList.toggle("avon-theme-light", !dark);
+        root.style.setProperty(
+          "--avon-docs-paint-bg",
+          dark ? "#111318" : "#fafaf9",
+        );
+        root.style.setProperty("--avon-page-bg", dark ? "#111318" : "#fafaf9");
+
+        if (themeColor) {
+          themeColor.setAttribute("content", dark ? "#111318" : "#fafaf9");
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
