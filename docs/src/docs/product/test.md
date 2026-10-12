@@ -10,6 +10,37 @@ Lecturers can:
 
 Students get a clear “how did I do?” signal without leaving the course flow.
 
+## For lecturers
+
+**Verify during setup.** In **Coursework → Verify**, upload a sample solution
+and tick the files students are expected to change. Avon runs the template
+tests against it inside the coursework's Docker image and shows each stage as
+it happens. A passing verification completes the step; a failing one shows
+which tests failed and why.
+
+**Test students from the Testing page.** The **Testing** item in the sidebar
+is organised in tabs:
+
+- **Overview** walks through the three stages (verify, run, review) and lists
+  the students who need attention.
+- **Students** lets you search, filter, and select students, then run all,
+  run the selection, or re-run one repository.
+- **Results** shows class averages, the score distribution, and the tests the
+  class finds hardest.
+- **History** lists every batch of runs.
+
+Open any run to see its overview, each test result, and a timestamped log
+with the raw output. Student edits to `tests/` are discarded and flagged, and
+changes outside the files you expected are highlighted.
+
+## How tests run
+
+Your Docker image's `CMD` runs the tests with the student's code mounted at
+the image `WORKDIR` and no internet access. Write JUnit XML to
+`$AVON_RESULTS_DIR` (for example `pytest --junitxml=$AVON_RESULTS_DIR/junit.xml`)
+for per-test results; otherwise the exit code decides pass or fail. The test
+runner itself is configured by your Avon operator.
+
 ## How it fits the activity
 
 - Autograder feedback lives **inside the Avon activity**, alongside the project context.
